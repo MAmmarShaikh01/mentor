@@ -1,115 +1,94 @@
-# import os
-# from dotenv import load_dotenv
-# from agents import Agent, Runner, function_tool
-# from agents.extensions.models.litellm_model import LitellmModel
-
-# # 🔐 Load ENV
-# load_dotenv()
-# GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-# # 🛠️ Career Roadmap Tool
-# @function_tool
-# def get_career_roadmap(field: str) -> str:
-#     print(f"[Tool] Generating roadmap for: {field}")
-#     field = field.lower()
-#     if "frontend" in field:
-#         return (
-#             "📘 Frontend Developer Roadmap:\n"
-#             "1. HTML, CSS, JS Basics\n"
-#             "2. Responsive Design (Flex/Grid)\n"
-#             "3. Frameworks: React/Next.js\n"
-#             "4. Tailwind CSS, State Management\n"
-#             "5. Build Projects + Deploy\n"
-#         )
-#     elif "data science" in field:
-#         return (
-#             "📊 Data Science Roadmap:\n"
-#             "1. Python, NumPy, Pandas\n"
-#             "2. Data Cleaning & Visualization\n"
-#             "3. ML with Scikit-learn\n"
-#             "4. Deep Learning (TensorFlow)\n"
-#             "5. Real-world datasets practice\n"
-#         )
-#     else:
-#         return f"⚠️ Sorry, no roadmap found for '{field}'. Try 'frontend' or 'data science'."
-
-# # 🧠 Career Agent
-# agent = Agent(
-#     name="CareerAgent",
-#     instructions="You are a career mentor. Use tools to suggest skill roadmaps. Keep it clear and helpful.",
-#     tools=[get_career_roadmap],
-#     model=LitellmModel(
-#         model="gemini/gemini-2.0-flash",
-#         api_key=GEMINI_API_KEY,
-#     )
-# )
-
-# # 🏃 Runner
-# if __name__ == "__main__":
-#     user_input = "Can you give me a roadmap for backend development?"
-#     result = Runner.run_sync(agent, user_input)
-#     print("[Agent Reply] ", result.final_output)
-
-#! ---------------------------------------------------------------------------- #
-#!                              code with handsoff                              #
-#! ---------------------------------------------------------------------------- #
-
 import os
 from dotenv import load_dotenv
-from agents import Agent, AgentContext, HandoffRequest, Runner, function_tool
-from agents.extensions.models.litellm_model import LitellmModel
-from agents.types import HandoffRequest
-load_dotenv()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+from agents import Agent, Runner, OpenAIChatCompletionsModel, AsyncOpenAI, function_tool
 
-# 🛠️ TOOL: get_career_roadmap
+# --------- Load Env ---------
+load_dotenv()
+api_key = os.getenv("GEMINI_API_KEY")
+if not api_key:
+    raise ValueError("GEMINI_API_KEY not found in .env file")
+
+# --------- Client & Model ---------
+client = AsyncOpenAI(
+    api_key=api_key,
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+)
+model = OpenAIChatCompletionsModel(
+    model="gemini-2.5-flash",
+    openai_client=client
+)
+
+# --------- Tools ---------
 @function_tool
 def get_career_roadmap(field: str) -> str:
+    """Provides skill roadmap for a given career field."""
     field = field.lower()
     if "frontend" in field:
         return (
             "📘 Frontend Developer Roadmap:\n"
-            "1. HTML, CSS, JS\n"
-            "2. Responsive Design\n"
+            "1. HTML, CSS, JS Basics\n"
+            "2. Responsive Design (Flex/Grid)\n"
             "3. React/Next.js\n"
-            "4. Tailwind CSS\n"
-            "5. Build Projects"
+            "4. Tailwind CSS, State Management\n"
+            "5. Build Projects + Deploy"
         )
-    return f"No roadmap for '{field}'"
+    elif "data science" in field:
+        return (
+            "📊 Data Science Roadmap:\n"
+            "1. Python, NumPy, Pandas\n"
+            "2. Data Cleaning & Visualization\n"
+            "3. ML with Scikit-learn\n"
+            "4. Deep Learning (TensorFlow)\n"
+            "5. Real-world datasets practice"
+            "6. Frontend Development"
+        )
+    else:
+        return f"⚠️ Sorry, no roadmap found for '{field}'. Try 'frontend' or 'data science'."
 
-# 🧠 SKILL AGENT (receives handoff)
+# --------- Agents ---------
 skill_agent = Agent(
     name="SkillAgent",
-    instructions="You provide skill roadmaps using tools like get_career_roadmap.",
-    tools=[get_career_roadmap],
-    model=LitellmModel(
-        model="gemini/gemini-2.0-flash",
-        api_key=GEMINI_API_KEY,
-    )
+    instructions="""
+    You provide skill roadmaps using tools like get_career_roadmap.
+    """,
+    model=model,
+    tools=[get_career_roadmap]
 )
-
-# 🎓 CAREER AGENT (does handoff)
-async def career_agent_logic(ctx: AgentContext):
-    msg = ctx.chat_history[-1]["content"].lower()
-    if "frontend" in msg or "roadmap" in msg:
-        # 🪙 Handoff to SkillAgent
-        return HandoffRequest(
-            to="SkillAgent",
-            input="frontend"
-        )
-    return "Based on your interest, I suggest Frontend Development!"
 
 career_agent = Agent(
     name="CareerAgent",
-    instructions="You guide students to career fields. If user asks for roadmap, hand off to SkillAgent.",
-    model=LitellmModel(
-        model="gemini/gemini-2.0-flash",
-        api_key=GEMINI_API_KEY,
-    ),
-    logic=career_agent_logic
+    instructions="""
+    Guide students to career fields based on their interests.
+    If user specifically asks for a skill roadmap or mentions frontend/data science,
+    hand off to SkillAgent for detailed steps.
+    """,
+    model=model,
+    handoffs=[skill_agent]
 )
 
-# 🏃 RUNNER
+mentor_agent = Agent(
+    name="CareerMentorAgent",
+    instructions="""
+    Full career guidance experience:
+    - Use CareerAgent for suggesting career paths.
+    - Use SkillAgent for roadmap details.
+    Perform handoffs accordingly.
+    """,
+    model=model,
+    handoffs=[career_agent, skill_agent]
+)
+
+# --------- Run ---------
 if __name__ == "__main__":
-    result = Runner.run_sync([career_agent, skill_agent], "I want a roadmap for frontend development")
-    print("\n[💬 Final Response] ", result.final_output)
+    query = "I want a roadmap for frontend development"
+    result = Runner.run_sync(mentor_agent, query)
+
+    print("\n---- FINAL OUTPUT ----")
+    print(result.final_output)
+
+    steps = getattr(result, "steps", None)  # type: ignore
+    if steps:
+        print("\n---- AGENT USED ----")
+        print(steps[-1].agent_name)
+    else:
+        print("\nNo steps found (SDK version may vary).")
