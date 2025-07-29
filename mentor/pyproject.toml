@@ -1,0 +1,11 @@
+[project]
+name = "mentor"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "litellm>=1.74.6",
+    "openai-agents>=0.2.2",
+    "python-dotenv>=1.1.1",
+]
